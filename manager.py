@@ -20,7 +20,7 @@ class Topic:
 			self.users.remove(client)
 			return True
 		return False
-
+#the Manager and the chat never interact with the database directly
 class Manager:
 	def __init__(self,t,u):
 		self.threads = {'base':Topic('base'),'base1':Topic('base1')}
@@ -31,11 +31,13 @@ class Manager:
 			self.users[x.name] = md5(x.password.encode()).hexdigest()
 		print(str(self.users))
 	def add_user(self,t):
+		#to be done by the outer server
 		if t[0] not in self.users:
 			self.users[t[0]] = t[1]
 			return True
 		return False
 	def add_thread(self,t):
+		#to be done by the outer server
 		if t not in self.threads:
 			self.threads[t[0]] = Topic(t[1])
 			return True
