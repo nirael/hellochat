@@ -1,106 +1,135 @@
-from hashlib import md5
+from .chattools import *
+import time
+import threading
+from socket import *
+from .manager import Manager
 
-class Topic:
-	def __init__(self,name):
+def now():
+	return time.ctime(time.time())
+
+#functions for manipulating 
+def encode(data):
+	msg = Frame.buildMessage(data.encode(),mask=False)
+	return msg
+
+def decode(f):
+	return "".join([chr(x) for x in f.message()])
+
+class SocketServer:
+	def __init__(self,host,port,manager):
+		self.manager = manager
+		self.sock = socket(AF_INET,SOCK_STREAM)
+		self.sock.bind((host,port))
+		self.sock.listen(5)
+		self.lock = threading.Lock()
+	def start(self):
+		while True:
+			connection,address = self.sock.accept()
+			print("New connection at " + now() + "!")
+			Handler(connection,self.manager,self.lock).start()
+		self.stop()
+	def stop(self):
+		self.sock.close()
+
+class Client(threading.Thread):
+	handshaken = []
+	def __init__(self,con,manager,lock):
+		self.lock = lock
+		self.sock = con
+		self.manager = manager
+		self.uname = None
+		self.thread = None
+		self.password = None
+		threading.Thread.__init__(self)
+	def close(self):
+		if self.sock in self.handshaken:
+			self.handshaken.remove(self.sock)
+		self.sock.close()
+		self.manager.remove(self)
+	def run(self):
+		while True:
+			if self.sock not in self.handshaken:
+				data = self.sock.recv(10000)
+				upgrade = Handshake.upgrade(data)
+				if not upgrade:break
+				self.handshaken.append(self.sock)
+				self.sock.send(upgrade.encode())
+				continue
+			else:
+				data = self.sock.recv(1024)
+				if not data:break
+				frame = Frame(data)
+				if frame.opcode == 1:
+					#actually not sure if this lock is necessary
+					with self.lock:
+						self.handle(decode(frame))
+				else:
+					break
+		self.close()
+		print("Connection closed! ", now())
+
+class Handler(Client):
+	#format : a: b\r\nc: d\r\n,query type is a must
+	def parse_headers(self,headers):
+		final = {}
+		s = headers.split('\r\n')
+		for val in s:
+			if len(val) > 4:
+				delim = val.find(":")
+				final[val[:delim]] = val[delim+2:]
+		return final
+	def handle(self,query):
+		data = self.parse_headers(query)
+		qr = data.get('query')
+		if not qr:return False
+		if qr in "auth|message|subscribe|unsubscribe".split("|"):
+			getattr(self,qr)(data)
+		else:self.sock.send(encode("Invalid query!"))
+	def auth(self,data):
+		name = data.get('name')
+		password = data.get('password')
 		self.uname = name
-		self.users = []
-	def send(self,msg):
-		for x in self.users:
-			try:
-				x.sock.send(msg)
-			except OSError:
-				self.users.remove(x)
-	def add(self,client):
-		if not client in self.users:
-			self.users.append(client)
-			return True
-		else:return False
-	def remove(self,client):
-		if client in self.users:
-			self.users.remove(client)
-			return True
-		return False
-
-class Manager:
-	def __init__(self,t,u):
-		self.threads = {'base':Topic('base'),'base1':Topic('base1')}
-		self.users = {}
-		for x in t:
-			self.threads[x.name] = Topic(x.name)
-		for x in u:
-			self.users[x.name] = md5(x.password.encode()).hexdigest()
-	def add_user(self,t):
-		if t[0] not in self.users:
-			self.users[t[0]] = t[1]
-			return True
-		return False
-	def add_thread(self,t):
-		if t not in self.threads:
-			self.threads[t[0]] = Topic(t[1])
-			return True
-		return True
-		#the user is his password initially, so if there's an object , it should be unsubscribed and 
-		#removed from the line of active users
-	def drop_user(self,uname):
-		if not uname in self.users:return False
-		if not isinstance(self.users.get(uname),str):
-			usr = self.users.get(uname)
-			self.remove(usr)
-			usr.close()
-		del self.users[uname]
-		return True
-
-	def drop_thread(self,tname):
-		if self.threads.get(tname):
-			thread = self.threads.get(tname)
-			for x in thread.users:
-				self.unsubscribe(x)
-		else:return False
-		del self.threads[tname]
-		return True
-
-		#send messages to all the users in the user thread , if there's not any , subscribe
-		#user to the base thread
-	def send(self,client,msg):
-		thread = client.thread
-		if not thread:
-			self.threads['base'].add(client)
-			client.thread = 'base'
-			self.threads['base'].send(msg)
+		self.password = password
+		action = self.manager.add(self)
+		if action:
+			self.uname = name
+			self.sock.send(encode("You've connected!"))
+			self.manager.send(self,encode("User "+ self.uname + " has connected!"))
 		else:
-			self.threads[thread].send(msg)
-		#this is auth
-	def add(self,client):
-		if client.uname in self.users:
-			if isinstance(self.users[client.uname],str):
-				print("adding client...")
-				if self.users[client.uname] == client.password:
-					self.users[client.uname] = client
-					return True
-		return False
-		#logout
-	def remove(self,client):
-		if client.uname in self.users:
-			if client.thread:
-				self.threads[client.thread].remove(client)
-			self.users[client.uname] = client.password
-	def subscribe(self,client,t):
-		thread = self.threads.get(t)
-		if thread:
-			if client.thread:
-				try:
-					self.threads[client.thread].remove(client)
-				except KeyError:
-					pass
-				client.thread = thread.uname
-			return thread.add(client)
-		return False
-	def unsubscribe(self,client):
-		return self.subscribe(client,'base')
-		#possible error
-		if client.thread:
-			client.thread = 'base'
-			self.thread['base'].add(client)
-			return self.threads[client.thread].remove(client)
-		return False
+			self.sock.send(encode("""You cannot connect as you did not log in on the server 
+				or you have already logged in in the chat!"""))
+	def message(self,data):
+		if not self.check_auth():return
+		message = data.get('message')
+		if message:
+			self.manager.send(self,encode("User " + self.uname + " : " + message))
+		else:
+			self.sock.send(encode("You cannot send this message =("))
+	def subscribe(self,data):
+		if not self.check_auth():return
+		topic = data.get('topic')
+		if topic:
+			self.sock.send(encode("Trying to subscribe to the " + topic))
+			sub = self.manager.subscribe(self,topic)
+			if sub:self.manager.send(self,encode("User " + self.uname + " has joined us!"))
+			else:self.sock.send(encode("Subscription failed!"))
+		else:
+			self.sock.send(encode("You did not define the topic!"))
+	def unsubscribe(self,data):
+		if not self.check_auth():return
+		self.sock.send(encode("Unsubscribing..."))
+		self.manager.send(self,encode("User " + self.uname + " unsubscribed"))
+		unsub = self.manager.unsubscribe(self)
+		if unsub:self.sock.send(encode("You've unsubscribed!"))
+	def check_auth(self):
+		if not self.uname:
+			self.sock.send(encode("You should log in!"))
+			return False
+		return True
 
+
+
+#if __name__ == '__main__':
+	#manager = Manager([{'name':'test'}])
+	#server = SocketServer('',50001,manager)
+	#server.start()
