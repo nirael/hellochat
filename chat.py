@@ -14,7 +14,7 @@ def encode(data):
 
 def decode(f):
 	return "".join([chr(x) for x in f.message()])
-
+#not actually sure if it doesn't overeat memory
 class SocketServer:
 	def __init__(self,host,port,manager):
 		self.manager = manager
@@ -36,6 +36,7 @@ class Client(threading.Thread):
 	def __init__(self,con,manager,lock):
 		self.lock = lock
 		self.sock = con
+		self.sock.settimeout(60*60*3)
 		self.manager = manager
 		self.uname = None
 		self.thread = None
@@ -48,23 +49,26 @@ class Client(threading.Thread):
 		self.manager.remove(self)
 	def run(self):
 		while True:
-			if self.sock not in self.handshaken:
-				data = self.sock.recv(10000)
-				upgrade = Handshake.upgrade(data)
-				if not upgrade:break
-				self.handshaken.append(self.sock)
-				self.sock.send(upgrade.encode())
-				continue
-			else:
-				data = self.sock.recv(1024)
-				if not data:break
-				frame = Frame(data)
-				if frame.opcode == 1:
-					#actually not sure if this lock is necessary
-					with self.lock:
-						self.handle(decode(frame))
+			#it should be running only for 4 hours 
+			try:
+				if self.sock not in self.handshaken:
+					data = self.sock.recv(10000)
+					upgrade = Handshake.upgrade(data)
+					if not upgrade:break
+					self.handshaken.append(self.sock)
+					self.sock.send(upgrade.encode())
+					continue
 				else:
-					break
+					data = self.sock.recv(1024)
+					if not data:break
+					frame = Frame(data)
+					if frame.opcode == 1:
+						#actually not sure if this lock is necessary
+						with self.lock:
+							self.handle(decode(frame))
+					else:
+						break
+			except timeout:break
 		self.close()
 		print("Connection closed! ", now())
 
@@ -127,7 +131,7 @@ class Handler(Client):
 			return False
 		return True
 
-
+#the way to start it
 
 #if __name__ == '__main__':
 	#manager = Manager([{'name':'test'}])
