@@ -48,7 +48,6 @@ class EchoServer(object):
                 delim = val.find(":")
                 final[val[:delim]] = val[delim+2:]
         return final
-    #@asyncio.coroutine 
     def handle(self,query,writer):
         data = self.parse_headers(query)
         qr = data.get('query')
@@ -90,13 +89,9 @@ class EchoServer(object):
         while True:
             data = b""
             try:
-                #while not reader.at_eof():
-                    #data += yield from asyncio.wait_for(reader.readline(), timeout=100.0)
                 if not self.is_in(writer):
                     data = yield from reader.read(10000)
                     upgrade = Handshake.upgrade(data)
-                    #logging.info("User data: {}".format(data.decode()))
-                    #logging.info("Upgrade: {}".format(upgrade))
                     if not upgrade:break
                     writer.write(upgrade.encode())
                     self.clients.append({'sock':writer})
@@ -108,7 +103,6 @@ class EchoServer(object):
                 try:
                     if frm.opcode == 1:
                         dt = decode(frm)
-                        #yield from 
                         client = self.get_client(writer)
                         self.handle(dt,client)
                 except Exception:
