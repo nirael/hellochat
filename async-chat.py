@@ -54,7 +54,7 @@ class EchoServer(object):
         if not qr:return False
         if qr in "message|subscribe|unsubscribe|name".split("|"):
             getattr(self,qr)(data,writer)
-        else:self.sock.send(encode("Invalid query!"))
+        else:wirter.write(encode("Invalid query!"))
     def name(self,data,writer):
         name = data.get('name')
         if not name:
